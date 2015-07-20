@@ -12,6 +12,7 @@ from django.contrib.auth.models import User
 from django.template.defaultfilters import title
 from django.utils.translation import ugettext as _
 
+from cms.admin import cmsadmin
 
 PAGE_ADMIN_INLINES = []
 
@@ -178,3 +179,4 @@ if get_cms_setting('PERMISSION'):
         ViewRestrictionInlineAdmin,
         PagePermissionInlineAdmin,
     ])
+

@@ -218,10 +218,14 @@ class CMSPlugin(MPTTModel):
             return u''
 
     def save(self, no_signals=False, *args, **kwargs):
-        if no_signals:  # ugly hack because of mptt
-            super(CMSPlugin, self).save_base(cls=self.__class__)
-        else:
-            super(CMSPlugin, self).save()
+        from cms.utils.permissions import _thread_locals
+        user = getattr(_thread_locals, "user", None)
+        page = self.placeholder.page_set.all()[0]
+        if user.username == page.created_by or user.is_staff:
+            if no_signals:  # ugly hack because of mptt
+                super(CMSPlugin, self).save_base(cls=self.__class__)
+            else:
+                super(CMSPlugin, self).save()
 
     def set_base_attr(self, plugin):
         for attr in ['parent_id', 'placeholder', 'language', 'plugin_type', 'creation_date', 'level', 'lft', 'rght', 'position', 'tree_id']:

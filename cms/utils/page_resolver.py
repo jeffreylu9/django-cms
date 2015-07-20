@@ -14,6 +14,8 @@ from cms.exceptions import NoHomeFound
 from cms.models.pagemodel import Page
 from cms.utils.urlutils import any_path_re
 
+from WLSite import is_teacher
+
 ADMIN_PAGE_RE_PATTERN = ur'cms/page/(\d+)'
 ADMIN_PAGE_RE = re.compile(ADMIN_PAGE_RE_PATTERN)
 
@@ -25,7 +27,7 @@ def use_draft(request):
     """
     preview_draft = 'preview' in request.GET and 'draft' in request.GET
     edit_mode = 'edit' in request.GET
-    authenticated = request.user.is_authenticated() and request.user.is_staff
+    authenticated = request.user.is_authenticated() and (is_teacher.is_teacher(request.user) or request.user.is_staff)
     return (preview_draft or edit_mode) and authenticated
 
 
@@ -158,23 +160,34 @@ def get_page_from_request(request, use_path=None):
 def is_valid_url(url, instance, create_links=True, site=None):
     """ Checks for conflicting urls
     """
+    print "called is_valid_url"
     page_root = urllib.unquote(reverse("pages-root"))
+    print "reversed the root"
     if url and url != page_root:
+        print "in an if block now"
         # Url sanity check via regexp
         if not any_path_re.match(url):
+            print "validation error yo"
             raise ValidationError(_('Invalid URL, use /my/url format.'))
         # We only check page FK to site object to allow is_valid_url check on
         # incomplete Page instances
+        print "okay we are here"
         if not site and instance.site_id:
+            print "not site and instance.site_id"
             site = instance.site
+        print "here now"
         # Retrieve complete queryset of pages with corresponding URL
         # This uses the same resolving function as ``get_page_from_path``
         if url.startswith(page_root):
+            print "url starts with page root"
             url = url[len(page_root):]
+        print "still not broken yet"
         page_qs = get_page_queryset_from_path(url.strip('/'), site=site)
+        print page_qs
         url_clashes = []
         # If queryset has pages checks for conflicting urls
         if page_qs is not None:
+            print "page_qs not none"
             # If single page is returned create a list for interface compat
             if isinstance(page_qs, Page):
                 page_qs = [page_qs]

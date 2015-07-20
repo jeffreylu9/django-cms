@@ -19,16 +19,20 @@ class Placeholder(models.Model):
         return self.slot
 
     def get_add_url(self):
-        return self._get_url('add_plugin')
+        return "/resourceadmin/cms/page/add-plugin/"
+        #return self._get_url('add_plugin')
 
     def get_move_url(self):
-        return self._get_url('move_plugin')
+        return "/resourceadmin/cms/page/move-plugin/"
+        #return self._get_url('move_plugin')
 
     def get_remove_url(self):
-        return self._get_url('remove_plugin')
+        return "/resourceadmin/cms/page/remove-plugin/"
+        #return self._get_url('remove_plugin')
 
     def get_changelist_url(self):
-        return self._get_url('changelist')
+        return "/resourceadmin/cms/page/"
+        #return self._get_url('changelist')
 
     def _get_url(self, key):
         model = self._get_attached_model()

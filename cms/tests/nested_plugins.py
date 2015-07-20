@@ -11,7 +11,7 @@ from cms.test_utils.util.context_managers import SettingsOverride
 from cms.utils.copy_plugins import copy_plugins_to
 
 
-URL_CMS_MOVE_PLUGIN = u'/en/admin/cms/page/%d/move-plugin/'
+URL_CMS_MOVE_PLUGIN = u'cms/cmsadmin/cms/page/%d/move-plugin/'
 
 
 class NestedPluginsTestCase(PluginsTestBaseCase):

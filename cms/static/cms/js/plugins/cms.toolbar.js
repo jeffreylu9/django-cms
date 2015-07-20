@@ -61,7 +61,7 @@ CMS.$(document).ready(function ($) {
 			// scheck if toolbar should be shown or hidden
 			($.cookie('CMS_toolbar-collapsed') == 'false') ? this.toolbar.data('collapsed', true) : this.toolbar.data('collapsed', false);
 			// follow up script to set the current state
-			this.toggleToolbar();
+			this._showToolbar();
 
 			// set toolbar to visible
 			this.wrapper.show();

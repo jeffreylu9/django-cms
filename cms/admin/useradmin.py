@@ -12,6 +12,7 @@ from cms.exceptions import NoPermissionsException
 from cms.models import PageUser, PageUserGroup
 from cms.utils.permissions import get_subordinate_users
 
+from cms.admin import cmsadmin
 
 class PageUserAdmin(UserAdmin, GenericCmsPermissionAdmin):
     form = PageUserForm

@@ -14,6 +14,8 @@ from django.core.urlresolvers import reverse
 from django.http import HttpResponseRedirect
 from django.utils.translation import ugettext_lazy as _
 
+from WLSite import is_teacher
+
 
 def _get_draft_page_id(toolbar):
     page = toolbar.request.current_page
@@ -34,7 +36,7 @@ def _get_add_child_url(context, toolbar, **kwargs):
         'target': _get_draft_page_id(toolbar),
     }
     args = urllib.urlencode(data)
-    return '%s?%s' % (reverse('admin:cms_page_add'), args)
+    return '%s?%s' % (reverse('cmsadmin:cms_page_add'), args)
 
 def _get_add_sibling_url(context, toolbar, **kwargs):
     data = {
@@ -43,7 +45,7 @@ def _get_add_sibling_url(context, toolbar, **kwargs):
     if toolbar.request.current_page.parent_id:
         data['target'] = toolbar.request.current_page.get_draft_object().parent_id
     args = urllib.urlencode(data)
-    return '%s?%s' % (reverse('admin:cms_page_add'), args)
+    return '%s?%s' % (reverse('cmsadmin:cms_page_add'), args)
 
 def _get_delete_url(context, toolbar, **kwargs):
     return reverse('admin:cms_page_delete', args=(_get_draft_page_id(toolbar),))
@@ -91,11 +93,13 @@ class CMSToolbar(Toolbar):
 
     @property
     def edit_mode(self):
-        return self.is_staff and self.edit_mode_switcher.get_state(self.request) and self.can_change
+        return self.edit_mode_switcher.get_state(self.request) and self.can_change and (self.request.current_page.created_by == self.request.user.username or self.is_staff)
+        #return self.is_staff and self.edit_mode_switcher.get_state(self.request) and self.can_change
 
     @property
     def show_toolbar(self):
-        return self.is_staff or self.edit_mode_switcher.get_state(self.request)
+        return self.edit_mode_switcher.get_state(self.request) and (self.request.current_page.created_by == self.request.user.username or self.is_staff)
+        #return self.is_staff or self.edit_mode_switcher.get_state(self.request)
 
     @property
     def current_page(self):
@@ -115,16 +119,17 @@ class CMSToolbar(Toolbar):
         is_staff = self.is_staff
         can_change = self.can_change
         edit_mode = self.edit_mode
+        created_by_user = self.request.current_page.created_by == self.request.user.username
 
         if can_change:
             items.append(
                 self.edit_mode_switcher
             )
 
-        if is_staff:
+        if created_by_user or is_staff:
 
             current_page = self.request.current_page
-
+    
             if current_page:
                 # publish button
                 if edit_mode:
@@ -134,16 +139,20 @@ class CMSToolbar(Toolbar):
                         )
                     if self.revert_button.is_enabled_for(self.request):
                         items.append(self.revert_button)
-
-                # The 'templates' Menu
+                
                 if can_change:
+                    items.append(self.get_privacy_menu(context, can_change, is_staff))
+    
+                # The 'templates' Menu
+                if can_change and is_staff:
                     items.append(self.get_template_menu(context, can_change, is_staff))
-
+    
                 # The 'page' Menu
                 items.append(self.get_page_menu(context, can_change, is_staff))
-
+    
             # The 'Admin' Menu
-            items.append(self.get_admin_menu(context, can_change, is_staff))
+            if is_staff:
+                items.append(self.get_admin_menu(context, can_change, is_staff))
 
         if not self.request.user.is_authenticated():
             items.append(
@@ -175,16 +184,21 @@ class CMSToolbar(Toolbar):
         """
         Builds the 'page menu'
         """
-        menu_items = [
-            ListItem('overview', _('Move/add Pages'),
-                     reverse('admin:cms_page_changelist'),
-                     icon=cms_static_url('images/toolbar/icons/icon_sitemap.png')),
-        ]
-        menu_items.append(
-            ListItem('addchild', _('Add child page'),
-                     _get_add_child_url,
-                     icon=cms_static_url('images/toolbar/icons/icon_child.png'))
-        )
+        if is_staff:
+            menu_items = [
+                ListItem('overview', _('Move/add Pages'),
+                         reverse('admin:cms_page_changelist'),
+                         icon=cms_static_url('images/toolbar/icons/icon_sitemap.png')),
+            ]
+        else:
+            menu_items = []
+            
+#   menu_items.append(
+ #           ListItem('addchild', _('Add child page'),
+ #                    _get_add_child_url,
+ #                    icon=cms_static_url('images/toolbar/icons/icon_child.png'))
+ #       )
+
 
         menu_items.append(
             ListItem('addsibling', _('Add sibling page'),
@@ -192,14 +206,32 @@ class CMSToolbar(Toolbar):
                      icon=cms_static_url('images/toolbar/icons/icon_sibling.png'))
         )
 
-        menu_items.append(
-            ListItem('delete', _('Delete Page'), _get_delete_url,
-                     icon=cms_static_url('images/toolbar/icons/icon_delete.png'))
-        )
+        if is_staff:
+            menu_items.append(
+                ListItem('delete', _('Delete Page'), _get_delete_url,
+                         icon=cms_static_url('images/toolbar/icons/icon_delete.png'))
+            )
         return List(RIGHT, 'page', _('Page'),
                     cms_static_url('images/toolbar/icons/icon_page.png'),
                     items=menu_items)
-
+        
+    def get_privacy_menu(self, context, can_change, is_staff):
+        # The first number in the URL is the id for the published version of the page, the second is for the draft version.
+        privacy_url = "/resources/"+str(self.request.current_page.publisher_public_id)+"/"+str(self.request.current_page.pk)+"/privacy/"
+        menu_items = [
+                      # Since there needs to be a number, I used 1 (authenticated only) for "anyone can view".
+                      # Since we don't use "authenticated only" and "anon only" to control who can see pages (they're only used by default CMS,
+                      # to determine who sees things in a site nav menu we don't use) this is OK for now. If we later decide to add support
+                      # for these privacy options, I'll just make limit_visibility_in_menu = 6 be "anyone can view".
+                      ListItem('anyone', _('Anyone can view'), privacy_url+"1"),
+                      ListItem('teachers', _('Only teachers can view'), privacy_url+"3"),
+                      ListItem('self', _('Only I can view'), privacy_url+"4"),
+                      ListItem('no-one', _('No one can view (delete)'), privacy_url+"5"),
+                      ]
+        return List(RIGHT, 'admin', _('Privacy'),
+            "",
+            items=menu_items)
+        
     def get_admin_menu(self, context, can_change, is_staff):
         """
         Builds the 'admin menu' (the one with the cogwheel)
@@ -235,7 +267,7 @@ class CMSToolbar(Toolbar):
         request = self.request
         if 'cms-toolbar-logout' in request.GET:
             logout(request)
-            return HttpResponseRedirect(request.path)
+            return HttpResponseRedirect("/")
 
     def _request_hook_post(self):
         request = self.request

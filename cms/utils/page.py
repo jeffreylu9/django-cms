@@ -38,6 +38,11 @@ def is_valid_page_slug(page, parent, lang, slug, site, path=None):
         ## Check for path
     if path and qs.filter(path=path).count():
         return False
+    if Title.objects.filter(slug=slug):
+        for t in Title.objects.filter(slug=slug):
+            if t.page == page:
+                return True
+        return False
     return True
 
 

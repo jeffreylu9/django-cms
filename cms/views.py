@@ -10,19 +10,28 @@ from cms.test_utils.util.context_managers import SettingsOverride
 from django.conf import settings
 from django.conf.urls.defaults import patterns
 from django.core.urlresolvers import resolve, Resolver404, reverse
-from django.http import Http404, HttpResponseRedirect
+from django.contrib.auth.models import User
+from django.http import Http404, HttpResponseRedirect, HttpResponse
 from django.shortcuts import render_to_response
 from django.template.context import RequestContext
 from django.utils import translation
 from django.utils.http import urlquote
+from WLSite.ratings.models import AddChangeRatingForm, ResourceRating
+from django.contrib import auth
+
+from WLSite import is_teacher
+from WLSite.paths import helper, getURLComponents
+from WLSite.mpttcomments.models import ToggleCommentsForm
+import django_settings
+
 
 def _handle_no_page(request, slug):
     if not slug and settings.DEBUG:
         return render_to_response("cms/new.html", RequestContext(request))
     raise Http404('CMS: Page not found for "%s"' % slug)
 
-
 def details(request, slug):
+    print "details"
     """
     The main view of the Django-CMS! Takes a request and a slug, renders the
     page.
@@ -39,7 +48,7 @@ def details(request, slug):
     available_languages = []
     page_languages = page.get_languages()
     user_languages = get_public_languages()
-    if hasattr(request, 'user') and request.user.is_staff:
+    if hasattr(request, 'user') and (is_teacher.is_teacher(request.user) or request.user.is_staff):
         user_languages = get_language_list()
     for frontend_lang in user_languages:
         if frontend_lang in page_languages:
@@ -130,19 +139,73 @@ def details(request, slug):
             return HttpResponseRedirect(redirect_url + attrs)
 
     # permission checks
-    if page.login_required and not request.user.is_authenticated():
-        path = urlquote(request.get_full_path())
+    print "checking permissions"
+    if (page.login_required and not request.user.is_authenticated()):
         tup = settings.LOGIN_URL, "next", path
         return HttpResponseRedirect('%s?%s=%s' % tup)
+    if (page.limit_visibility_in_menu == 3 and not is_teacher.is_teacher(request.user)):
+        return HttpResponse("You must be a teacher to view this page.")
+    if (page.limit_visibility_in_menu == 4 and not request.user.username == page.created_by):
+        return HttpResponse("This page is private.")
+    if (page.limit_visibility_in_menu == 5):
+        return HttpResponse("This page has been deleted.")
+    context['privacy'] = page.limit_visibility_in_menu
 
     template_name = get_template_from_request(request, page, no_current_page=True)
     # fill the context 
+    print "filling context"
     context['lang'] = current_language
     context['current_page'] = page
     context['has_change_permissions'] = page.has_change_permission(request)
     context['has_view_permissions'] = page.has_view_permission(request)
-
+    
+    title = Title.objects.filter(slug=slug)[0].title
+    context['title'] = title
+    context['slug'] = slug
+    
+    creator = User.objects.get(username=page.created_by)
+    context['creator'] = creator
+    # for comments
+    context['p'] = page
+    context['is_project'] = False
+    components = getURLComponents(request)
+    variables = helper(request.user, components)
+    context.update(variables)
+    context['proj_url'] = page.get_absolute_url()
+    context['comment_id'] = None
+    if page.created_by == request.user.username:
+        if request.method == 'POST':
+            print "try to save comments form"
+            ToggleCommentsForm(page).save()
+            print "Saved form"
+        context['toggle_comments_form'] = ToggleCommentsForm(page)
+    else:
+        context['toggle_comments_form'] = None
+    context['comments_disabled'] = django_settings.get('all_comments_disabled') or page.comments_disabled
+    print "global comments disabled", django_settings.get('all_comments_disabled')    
+    url_parts = request.get_full_path().split("/")
+    edit_link = False
+    context['anon_user'] = False
+    if (auth.get_user(request)).is_authenticated():
+        if (page.created_by == request.user.username or request.user.is_staff) and url_parts[-1] != '?edit':
+            edit_link = True
+        context['edit_link'] = edit_link
+        context['editing'] = False
+        if url_parts[-1] == '?edit' and (((page.created_by == request.user.username) and not request.user.is_staff) or request.user.is_staff):
+            context['editing'] = True
+        form = AddChangeRatingForm()
+        context['rating_form'] = form
+        context["previous_rating"] = 0
+        if ResourceRating.objects.filter(user=request.user, resource=page).exists():
+            context["previous_rating"] = ResourceRating.objects.filter(user=request.user, resource=page)[0].value
+    else:
+        context['anon_user']=True
     if not context['has_view_permissions']:
         return _handle_no_page(request, slug)
+     
+    tag_string=""
+    for t in page.tags.all():
+        tag_string += str(t) + ", "
+    context["tag_string"] = tag_string
 
     return render_to_response(template_name, context_instance=context)

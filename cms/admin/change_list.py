@@ -51,7 +51,9 @@ class CMSChangeList(ChangeList):
         self._current_site = current_site(request)
         super(CMSChangeList, self).__init__(request, *args, **kwargs)
         try:
-            self.query_set = self.get_query_set(request)
+            from cms.utils.permissions import _thread_locals
+            user = getattr(_thread_locals, "user", None)
+            self.query_set = self.get_query_set(request).filter(created_by=user.username)
         except:
             raise
         self.get_results(request)
@@ -101,7 +103,8 @@ class CMSChangeList(ChangeList):
         # Get all the pages, ordered by tree ID (it's convenient to build the 
         # tree using a stack now)
         pages = self.get_query_set(request).drafts().order_by('tree_id',  'lft').select_related()
-        
+        if not request.user.is_staff:
+            pages = pages.filter(created_by=request.user.username)
         
         # Get lists of page IDs for which the current user has 
         # "permission to..." on the current site. 

@@ -23,6 +23,8 @@ from django.utils.translation import get_language, ugettext_lazy as _
 from menus.menu_pool import menu_pool
 from mptt.models import MPTTModel
 from os.path import join
+from WLSite.galleries.models import Gallery, Tag
+import django.forms as forms
 
 
 class Page(MPTTModel):
@@ -31,9 +33,13 @@ class Page(MPTTModel):
     """
     __metaclass__ = PageMetaClass
     LIMIT_VISIBILITY_IN_MENU_CHOICES = (
-        (1, _('for logged in users only')),
-        (2, _('for anonymous users only')),
+        (1, _('for all users')),
+        (2, _('for anonymous users only')), # not used
+        (3, _('for teachers only')),
+        (4, _('for myself only')),
+        (5, _('for no one (delete page)')),
     )
+    
     PUBLISHER_STATE_DEFAULT = 0
     PUBLISHER_STATE_DIRTY = 1
     PUBLISHER_STATE_DELETE = 2
@@ -66,7 +72,7 @@ class Page(MPTTModel):
     site = models.ForeignKey(Site, help_text=_('The site the page is accessible at.'), verbose_name=_("site"))
 
     login_required = models.BooleanField(_("login required"), default=False)
-    limit_visibility_in_menu = models.SmallIntegerField(_("menu visibility"), default=None, null=True, blank=True,
+    limit_visibility_in_menu = models.SmallIntegerField(_("menu visibility"), default=1, null=True, blank=True,
                                                         choices=LIMIT_VISIBILITY_IN_MENU_CHOICES, db_index=True,
                                                         help_text=_("limit when this page is visible in the menu"))
 
@@ -88,6 +94,18 @@ class Page(MPTTModel):
     objects = PageManager()
     permissions = PagePermissionsPermissionManager()
 
+    # Comment stuff
+    comments_disabled = models.BooleanField(default=False)
+    
+    # Put pages in galleries
+    galleries = models.ManyToManyField(Gallery, related_name="gallery_resources", blank=True)
+
+    # Sum of ratings
+    score = models.IntegerField(default=0, blank=True, null=True)
+    # Number of people who rated project
+    numWhoRated = models.IntegerField(default=0, blank=True, null=True)
+
+    tags = models.ManyToManyField(Tag, related_name="tag_resource", blank=True)
     class Meta:
         permissions = (
             ('view_page', 'Can view page'),
@@ -103,6 +121,26 @@ class Page(MPTTModel):
             'publisher_state', 'moderator_state',
             'placeholders', 'lft', 'rght', 'tree_id',
             'parent']
+
+    def validateTags(self, tags):
+        print "page validate tags"
+        if tags != '':
+            # split on commas or spaces
+#            tags_list = [ x.strip() for x in tags.replace(',', ' ').split() ]
+            tags_list = [ x.strip() for x in tags.split(',') ]
+            instance_list = []
+            for tag in tags_list:
+                instance = Tag.objects.get_or_create(title=tag)[0]
+                instance_list.append(instance)
+            return instance_list
+        else:
+            return []
+                    
+    def get_class(self):
+        return "Resource"
+    
+    def get_title(self):
+        return self.title_set.all()[0].title
 
     def __unicode__(self):
         title = self.get_menu_title(fallback=True)
@@ -121,7 +159,10 @@ class Page(MPTTModel):
     def get_absolute_url(self, language=None, fallback=True):
         if self.is_home():
             return reverse('pages-root')
+        print "get path:", self.get_path(language, fallback)
+        print "get slug:", self.get_slug(language, fallback)
         path = self.get_path(language, fallback) or self.get_slug(language, fallback)
+        print path
         return reverse('pages-details-by-slug', kwargs={"slug": path})
 
     def move_page(self, target, position='first-child'):
@@ -331,17 +372,26 @@ class Page(MPTTModel):
         menu_pool.clear(site_id=site.pk)
         return page_copy  # return the page_copy or None
 
-    def save(self, no_signals=False, commit=True, **kwargs):
+    def save(self, no_signals=False, commit=True, score=False, **kwargs):
         """
         Args:
             commit: True if model should be really saved
         """
 
         # delete template cache
+        if (self.score==None):
+            print "score null"
+            self.score = 0
+        if (self.numWhoRated==None):
+            print "numWhoRated null"
+            self.numWhoRated = 0
+        if (self.limit_visibility_in_menu == None):
+            self.limit_visibility_in_menu = 1
         if hasattr(self, '_template_cache'):
             delattr(self, '_template_cache')
 
-        created = not bool(self.pk)
+        #created = not bool(self.pk)
+
         # Published pages should always have a publication date
         # if the page is published we set the publish date if not set yet.
         if self.publication_date is None and self.published:
@@ -357,14 +407,18 @@ class Page(MPTTModel):
             self.changed_by = user.username
         else:
             self.changed_by = "script"
-        if created:
+        if not self.created_by:
             self.created_by = self.changed_by
 
         if commit:
-            if no_signals:  # ugly hack because of mptt
-                self.save_base(cls=self.__class__, **kwargs)
-            else:
-                super(Page, self).save(**kwargs)
+            print self.created_by
+            print user.username
+            if self.created_by == user.username or user.is_staff or score:
+                print "Created by this user"
+                if no_signals:  # ugly hack because of mptt
+                    self.save_base(cls=self.__class__, **kwargs)
+                else:
+                    super(Page, self).save(**kwargs)
 
     def save_base(self, *args, **kwargs):
         """Overridden save_base. If an instance is draft, and was changed, mark
@@ -1104,6 +1158,8 @@ class Page(MPTTModel):
                 placeholder = Placeholder.objects.create(slot=placeholder_name)
                 self.placeholders.add(placeholder)
                 found[placeholder_name] = placeholder
+                
+
 
 
 def _reversion():
@@ -1117,3 +1173,29 @@ def _reversion():
 
 
 _reversion()
+
+class AddResourceToGalleryForm(forms.Form):
+    # @summary: 
+    #    Form to add another user's project to your own gallery.
+    
+    #The width: 40% is because for some reason the select widget didn't get bigger when I increased the length of gallery names
+    
+    gallery = forms.ModelMultipleChoiceField(Gallery, None, required=False, widget=forms.SelectMultiple(attrs={"style":"width: 40%"}))
+
+    def __init__(self, user, resource, *args, **kwargs):
+        super(AddResourceToGalleryForm, self).__init__(*args, **kwargs)
+        self.user = user
+        #self.owner = owner
+        self.resource = resource
+        print self.user.gallery_set.exclude(default=True).exclude(shared=True)
+        self.fields["gallery"].queryset = self.user.gallery_set.exclude(default=True).exclude(shared=True).exclude(gtype=1).exclude(gtype=2)
+        
+    def save(self):
+        galleries = self.cleaned_data["gallery"]
+        print "galleries = ", galleries
+        if len(galleries)>0:
+            for g in galleries:
+                self.resource.galleries.add(g)
+            # Resource privacy settings don't depend on gallery, so we don't need to deal with that here
+        self.resource.save()
+        return self.resource

@@ -6,7 +6,7 @@ from cms.models import Page
 
 
 class LinkForm(ModelForm):
-    page_link = forms.ModelChoiceField(label=_("page"), queryset=Page.objects.drafts(), required=False)
+    page_link = forms.ModelChoiceField(label=_("Page"), queryset=Page.objects.drafts(), required=False, help_text=_("Choose a resource page to link to"))
     
     def for_site(self, site):    
         # override the page_link fields queryset to containt just pages for
@@ -15,4 +15,4 @@ class LinkForm(ModelForm):
     
     class Meta:
         model = Link
-        exclude = ('page', 'position', 'placeholder', 'language', 'plugin_type')
+        exclude = ('page', 'position', 'placeholder', 'language', 'plugin_type', 'target')

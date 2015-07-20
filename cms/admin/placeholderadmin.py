@@ -168,7 +168,7 @@ class PlaceholderAdmin(ModelAdmin):
             raise Http404
         plugin_type = request.POST['plugin_type']
         if not has_plugin_permission(request.user, plugin_type, "add"):
-            return HttpResponseForbidden("You don't have permission to add plugins")
+            return HttpResponseForbidden("You don't have permission to add plugins")       
 
         placeholder_id = request.POST.get('placeholder', None)
         position = None

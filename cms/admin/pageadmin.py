@@ -52,6 +52,8 @@ from cms.utils.plugins import current_site
 from cms.plugins.utils import has_reached_plugin_limit
 from menus.menu_pool import menu_pool
 
+from cms.admin import cmsadmin
+
 DJANGO_1_4 = LooseVersion(django.get_version()) < LooseVersion('1.5')
 require_POST = method_decorator(require_POST)
 
@@ -232,6 +234,7 @@ class PageAdmin(ModelAdmin):
         return data
 
     def save_model(self, request, obj, form, change):
+        print "Save model being called"
         """
         Move the page in the tree if necessary and save every placeholder
         Content object.
@@ -280,12 +283,19 @@ class PageAdmin(ModelAdmin):
             else:
                 obj.move_to(target, position)
 
-        Title.objects.set_or_create(
-            request,
-            obj,
-            form,
-            language,
-        )
+        if request.user.username == obj.created_by or request.user.is_staff:
+            Title.objects.set_or_create(
+                request,
+                obj,
+                form,
+                language,
+            )
+            
+        # Publish pages when first created, it doesn't make sense for a blank page
+        # to need admin approval
+        
+        if obj.published == False:
+            obj.publish()
 
     def get_fieldsets(self, request, obj=None):
         """
@@ -1447,9 +1457,14 @@ class PageAdmin(ModelAdmin):
         if key == 'site__exact':
             return True
         return super(PageAdmin, self).lookup_allowed(key, *args, **kwargs)
-
+    
+    # Redirect to resource page on save, instead of going to admin interface
+    def response_add(self, request, obj, post_url_continue="../%s/"):
+        slug = obj.title_set.all()[0].slug
+        return HttpResponseRedirect('/resources/'+slug+"/?edit")
 
 contribute_fieldsets(PageAdmin)
 contribute_list_filter(PageAdmin)
 
 admin.site.register(Page, PageAdmin)
+cmsadmin.cmsadmin.register(Page, PageAdmin)
