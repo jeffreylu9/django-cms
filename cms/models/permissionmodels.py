@@ -1,14 +1,39 @@
 # -*- coding: utf-8 -*-
 from django.db import models
+from django.conf import settings
+from django.contrib.auth.models import Group
+from django.contrib.sites.models import Site
+from django.core.exceptions import ImproperlyConfigured
+from django.utils import importlib
+from django.utils.encoding import force_text, python_2_unicode_compatible
 from django.utils.translation import ugettext_lazy as _
 
-from django.contrib.auth.models import User, Group
-from django.contrib.sites.models import Site
-
 from cms.models import Page
-from cms.models.managers import BasicPagePermissionManager, PagePermissionManager
+from cms.models.managers import (PagePermissionManager,
+                                 GlobalPagePermissionManager)
+from cms.utils.compat import DJANGO_1_6
 from cms.utils.helpers import reversion_register
 
+# Cannot use contrib.auth.get_user_model() at compile time.
+user_app_name, user_model_name = settings.AUTH_USER_MODEL.rsplit('.', 1)
+User = None
+if DJANGO_1_6:
+    for app in settings.INSTALLED_APPS:
+        if app.endswith(user_app_name):
+            user_app_models = importlib.import_module(app + ".models")
+            User = getattr(user_app_models, user_model_name)
+            break
+else:
+    from django.apps import apps
+    try:
+        User = apps.get_registered_model(user_app_name, user_model_name)
+    except KeyError:
+        pass
+if User is None:
+    raise ImproperlyConfigured(
+        "You have defined a custom user model %s, but the app %s is not "
+        "in settings.INSTALLED_APPS" % (settings.AUTH_USER_MODEL, user_app_name)
+    )
 
 # NOTE: those are not just numbers!! we will do binary AND on them,
 # so pay attention when adding/changing them, or MASKs..
@@ -29,14 +54,13 @@ ACCESS_CHOICES = (
     (ACCESS_PAGE_AND_CHILDREN, _('Page and children (immediate)')),
     (ACCESS_DESCENDANTS, _('Page descendants')),
     (ACCESS_PAGE_AND_DESCENDANTS, _('Page and descendants')),
-    )
-
+)
 
 class AbstractPagePermission(models.Model):
     """Abstract page permissions
     """
     # who:
-    user = models.ForeignKey(User, verbose_name=_("user"), blank=True, null=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, verbose_name=_("user"), blank=True, null=True)
     group = models.ForeignKey(Group, verbose_name=_("group"), blank=True, null=True)
 
     # what:
@@ -58,7 +82,7 @@ class AbstractPagePermission(models.Model):
         """Return audience by priority, so: All or User, Group
         """
         targets = filter(lambda item: item, (self.user, self.group,))
-        return ", ".join([unicode(t) for t in targets]) or 'No one'
+        return ", ".join([force_text(t) for t in targets]) or 'No one'
 
     def save(self, *args, **kwargs):
         if not self.user and not self.group:
@@ -67,23 +91,25 @@ class AbstractPagePermission(models.Model):
         return super(AbstractPagePermission, self).save(*args, **kwargs)
 
 
+@python_2_unicode_compatible
 class GlobalPagePermission(AbstractPagePermission):
     """Permissions for all pages (global).
     """
     can_recover_page = models.BooleanField(_("can recover pages"), default=True, help_text=_("can recover any deleted page"))
-    sites = models.ManyToManyField(Site, null=True, blank=True, help_text=_('If none selected, user haves granted permissions to all sites.'), verbose_name=_('sites'))
+    sites = models.ManyToManyField(Site, blank=True, help_text=_('If none selected, user haves granted permissions to all sites.'), verbose_name=_('sites'))
 
-    objects = BasicPagePermissionManager()
+    objects = GlobalPagePermissionManager()
 
     class Meta:
         verbose_name = _('Page global permission')
         verbose_name_plural = _('Pages global permissions')
         app_label = 'cms'
 
-    def __unicode__(self):
+    def __str__(self):
         return "%s :: GLOBAL" % self.audience
 
 
+@python_2_unicode_compatible
 class PagePermission(AbstractPagePermission):
     """Page permissions for single page
     """
@@ -97,15 +123,15 @@ class PagePermission(AbstractPagePermission):
         verbose_name_plural = _('Page permissions')
         app_label = 'cms'
 
-    def __unicode__(self):
-        page = self.page_id and unicode(self.page) or "None"
-        return "%s :: %s has: %s" % (page, self.audience, unicode(dict(ACCESS_CHOICES)[self.grant_on]))
+    def __str__(self):
+        page = self.page_id and force_text(self.page) or "None"
+        return "%s :: %s has: %s" % (page, self.audience, force_text(dict(ACCESS_CHOICES)[self.grant_on]))
 
 
 class PageUser(User):
     """Cms specific user data, required for permission system
     """
-    created_by = models.ForeignKey(User, related_name="created_users")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="created_users")
 
     class Meta:
         verbose_name = _('User (page)')
@@ -116,7 +142,7 @@ class PageUser(User):
 class PageUserGroup(Group):
     """Cms specific group data, required for permission system
     """
-    created_by = models.ForeignKey(User, related_name="created_usergroups")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="created_usergroups")
 
     class Meta:
         verbose_name = _('User group (page)')

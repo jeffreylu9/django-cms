@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
-import copy
 
+from itertools import chain
+
+from django.contrib.admin.templatetags.admin_static import static
+from django.contrib.auth import get_permission_codename
 from django.contrib.sites.models import Site
-from django.forms.widgets import Select, MultiWidget, Widget
-from django.template.context import RequestContext
-from django.template.loader import render_to_string
-from django.utils.encoding import force_unicode
+from django.core.urlresolvers import NoReverseMatch, reverse_lazy
+from django.forms.widgets import Select, MultiWidget, TextInput
+from django.utils.encoding import force_text
 from django.utils.safestring import mark_safe
 from django.utils.translation import ugettext as _
 
 from cms.forms.utils import get_site_choices, get_page_choices
-from cms.models import Page, PageUser, Placeholder
-from cms.plugin_pool import plugin_pool
-from cms.utils import get_language_from_request, cms_static_url
+from cms.models import Page, PageUser
 from cms.templatetags.cms_admin import CMS_ADMIN_ICON_BASE
 
 
@@ -25,16 +25,9 @@ class PageSelectWidget(MultiWidget):
             self.attrs = attrs.copy()
         else:
             self.attrs = {}
-        if site_choices is None or page_choices is None:
-            site_choices, page_choices = get_site_choices(), get_page_choices()
-        self.site_choices = site_choices
-        self.choices = page_choices
-        widgets = (Select(choices=site_choices ),
-                   Select(choices=[('', '----')]),
-                   Select(choices=self.choices, attrs={'style': "display:none;"} ),
-        )
-        super(PageSelectWidget, self).__init__(widgets, attrs)
-    
+        self.choices = []
+        super(PageSelectWidget, self).__init__((Select, Select, Select), attrs)
+
     def decompress(self, value):
         """
         receives a page_id in value and returns the site_id and page_id
@@ -46,11 +39,11 @@ class PageSelectWidget(MultiWidget):
             return [site.pk, page.pk, page.pk]
         site = Site.objects.get_current()
         return [site.pk,None,None]
-    
+
     def _has_changed(self, initial, data):
         # THIS IS A COPY OF django.forms.widgets.Widget._has_changed()
         # (except for the first if statement)
-        
+
         """
         Return True if data differs from initial.
         """
@@ -65,16 +58,26 @@ class PageSelectWidget(MultiWidget):
             initial_value = u''
         else:
             initial_value = initial
-        if force_unicode(initial_value) != force_unicode(data_value):
+        if force_text(initial_value) != force_text(data_value):
             return True
         return False
-    
+
     def render(self, name, value, attrs=None):
         # THIS IS A COPY OF django.forms.widgets.MultiWidget.render()
         # (except for the last line)
-        
+
         # value is a list of values, each corresponding to a widget
         # in self.widgets.
+
+        site_choices = get_site_choices()
+        page_choices = get_page_choices()
+        self.site_choices = site_choices
+        self.choices = page_choices
+        self.widgets = (Select(choices=site_choices ),
+                   Select(choices=[('', '----')]),
+                   Select(choices=self.choices, attrs={'style': "display:none;"} ),
+        )
+
         if not isinstance(value, list):
             value = self.decompress(value)
         output = []
@@ -98,10 +101,10 @@ class PageSelectWidget(MultiWidget):
     };
     var handlePageChange = function(page_id) {
         if (page_id) {
-            $("#id_%(name)s_2 option").removeAttr('selected');
-            $("#id_%(name)s_2 option[value=" + page_id + "]").attr('selected','selected');
+            $("#id_%(name)s_2 option").attr('selected', false);
+            $("#id_%(name)s_2 option[value=" + page_id + "]").attr('selected', true);
         } else {
-            $("#id_%(name)s_2 option[value=]").attr('selected','selected');
+            $("#id_%(name)s_2 option[value=]").attr('selected', true);
         };
     };
     $("#id_%(name)s_0").change(function(){
@@ -119,104 +122,189 @@ class PageSelectWidget(MultiWidget):
 })(django.jQuery);
 </script>''' % {'name': name})
         return mark_safe(self.format_output(output))
-    
+
     def format_output(self, rendered_widgets):
         return u' '.join(rendered_widgets)
-    
-    
-class PluginEditor(Widget):
-    def __init__(self, attrs=None):
-        if attrs is not None:
-            self.attrs = attrs.copy()
-        else:
-            self.attrs = {}
-        
-    class Media:
-        js = [cms_static_url(path) for path in (
-            'js/libs/jquery.ui.core.js',
-            'js/libs/jquery.ui.sortable.js',
-            'js/plugin_editor.js',
-        )]
-        css = {
-            'all': [cms_static_url(path) for path in (
-                'css/plugin_editor.css',
-            )]
-        }
 
-    def render(self, name, value, attrs=None):
-        
-        context = {
-            'plugin_list': self.attrs['list'],
-            'installed_plugins': self.attrs['installed'],
-            'copy_languages': self.attrs['copy_languages'],
-            'language': self.attrs['language'],
-            'show_copy': self.attrs['show_copy'],
-            'placeholder': self.attrs['placeholder'],
+class PageSmartLinkWidget(TextInput):
+
+
+    def __init__(self, attrs=None, ajax_view=None):
+        super(PageSmartLinkWidget, self).__init__(attrs)
+        self.ajax_url = self.get_ajax_url(ajax_view=ajax_view)
+
+    def get_ajax_url(self, ajax_view):
+        try:
+            return reverse_lazy(ajax_view)
+        except NoReverseMatch:
+            raise Exception(
+                'You should provide an ajax_view argument that can be reversed to the PageSmartLinkWidget'
+            )
+
+    def render(self, name=None, value=None, attrs=None):
+        final_attrs = self.build_attrs(attrs)
+        id_ = final_attrs.get('id', None)
+
+        output = [r'''<script type="text/javascript">
+(function($){
+    $(function(){
+        $("#%(element_id)s").select2({
+            placeholder: "%(placeholder_text)s",
+            allowClear: true,
+            minimumInputLength: 3,
+            ajax: {
+                url: "%(ajax_url)s",
+                dataType: 'json',
+                data: function (term, page) {
+                    return {
+                        q: term, // search term
+                        language_code: '%(language_code)s'
+                    };
+                },
+                results: function (data, page) {
+                    return {
+                        more: false,
+                        results: $.map(data, function(item, i){
+                            return {
+                                'id':item.redirect_url,
+                                'text': item.title + ' (/' + item.path + ')'}
+                            }
+                        )
+                    };
+                }
+            },
+            // Allow creation of new entries
+            createSearchChoice:function(term, data) { if ($(data).filter(function() { return this.text.localeCompare(term)===0; }).length===0) {return {id:term, text:term};} },
+            multiple: false,
+            initSelection : function (element, callback) {
+                var initialValue = element.val()
+                callback({id:initialValue, text: initialValue});
+            }
+        });
+    })
+})(CMS.$);
+</script>''' % {
+            'element_id': id_,
+            'placeholder_text': final_attrs.get('placeholder_text', ''),
+            'language_code': self.language,
+            'ajax_url': force_text(self.ajax_url)
+        }]
+
+        output.append(super(PageSmartLinkWidget, self).render(name, value, attrs))
+        return mark_safe(u''.join(output))
+
+
+    class Media:
+        css = {
+            'all': ('cms/js/select2/select2.css',
+                    'cms/js/select2/select2-bootstrap.css',)
         }
-        return mark_safe(render_to_string(
-            'admin/cms/page/widgets/plugin_editor.html', context))
+        js = ('cms/js/modules/cms.base.js',
+              'cms/js/select2/select2.js',)
 
 
 class UserSelectAdminWidget(Select):
     """Special widget used in page permission inlines, because we have to render
     an add user (plus) icon, but point it somewhere else - to special user creation
     view, which is accessible only if user haves "add user" permissions.
-    
-    Current user should be assigned to widget in form constructor as an user 
+
+    Current user should be assigned to widget in form constructor as an user
     attribute.
     """
     def render(self, name, value, attrs=None, choices=()):
-        output = [super(UserSelectAdminWidget, self).render(name, value, attrs, choices)]    
+        output = [super(UserSelectAdminWidget, self).render(name, value, attrs, choices)]
         if hasattr(self, 'user') and (self.user.is_superuser or \
-            self.user.has_perm(PageUser._meta.app_label + '.' + PageUser._meta.get_add_permission())):
+            self.user.has_perm(PageUser._meta.app_label + '.' + get_permission_codename('add', PageUser._meta))):
             # append + icon
             add_url = '../../../cms/pageuser/add/'
             output.append(u'<a href="%s" class="add-another" id="add_id_%s" onclick="return showAddAnotherPopup(this);"> ' % \
                     (add_url, name))
             output.append(u'<img src="%sicon_addlink.gif" width="10" height="10" alt="%s"/></a>' % (CMS_ADMIN_ICON_BASE, _('Add Another')))
         return mark_safe(u''.join(output))
-    
-    
-class PlaceholderPluginEditorWidget(PluginEditor):
-    attrs = {}
-    def __init__(self, request, filter_func):
-        self.request = request
-        self.filter_func = filter_func
-            
-    def __deepcopy__(self, memo):
-        obj = copy.copy(self)
-        obj.request = copy.copy(self.request)
-        obj.filter_func = self.filter_func
-        memo[id(self)] = obj
-        return obj
-        
-    def render(self, name, value, attrs=None):
-        try:
-            ph = Placeholder.objects.get(pk=value)
-        except Placeholder.DoesNotExist:
-            ph = None
-            context = {'add':True}
-        if ph:
-            plugin_list = ph.cmsplugin_set.filter(parent=None).order_by('position')
-            plugin_list = self.filter_func(self.request, plugin_list)
-            language = get_language_from_request(self.request)
-            copy_languages = []
-            if ph.actions.can_copy:
-                copy_languages = ph.actions.get_copy_languages(
-                    placeholder=ph,
-                    model=ph._get_attached_model(),
-                    fieldname=ph._get_attached_field_name()
-                )
-            context = {
-                'plugin_list': plugin_list,
-                'installed_plugins': plugin_pool.get_all_plugins(ph.slot, include_page_only=False),
-                'copy_languages': copy_languages, 
-                'language': language,
-                'show_copy': bool(copy_languages) and ph.actions.can_copy,
-                'urloverride': True,
-                'placeholder': ph,
-            }
-        #return mark_safe(render_to_string(
-        #    'admin/cms/page/widgets/plugin_editor.html', context))
-        return mark_safe(render_to_string(
-            'admin/cms/page/widgets/placeholder_editor.html', context, RequestContext(self.request)))
+
+
+class AppHookSelect(Select):
+
+    """Special widget used for the App Hook selector in the Advanced Settings
+    of the Page Admin. It adds support for a data attribute per option and
+    includes supporting JS into the page.
+    """
+
+    class Media:
+        js = ('cms/js/modules/cms.base.js', 'cms/js/modules/cms.app_hook_select.js', )
+
+    def __init__(self, attrs=None, choices=(), app_namespaces={}):
+        self.app_namespaces = app_namespaces
+        super(AppHookSelect, self).__init__(attrs, choices)
+
+    def render_option(self, selected_choices, option_value, option_label):
+        if option_value is None:
+            option_value = ''
+        option_value = force_text(option_value)
+        if option_value in selected_choices:
+            selected_html = mark_safe(' selected="selected"')
+            if not self.allow_multiple_selected:
+                # Only allow for a single selection.
+                selected_choices.remove(option_value)
+        else:
+            selected_html = ''
+
+        if option_value in self.app_namespaces:
+            data_html = mark_safe(' data-namespace="%s"' % self.app_namespaces[option_value])
+        else:
+            data_html = ''
+
+        return '<option value="%s"%s%s>%s</option>' % (
+            option_value,
+            selected_html,
+            data_html,
+            force_text(option_label),
+        )
+
+    def render_options(self, choices, selected_choices):
+        selected_choices = set(force_text(v) for v in selected_choices)
+        output = []
+        for option_value, option_label in chain(self.choices, choices):
+            output.append(self.render_option(selected_choices, option_value, option_label))
+        return '\n'.join(output)
+
+
+class ApplicationConfigSelect(Select):
+    """
+    Special widget -populate by javascript- that shows application configurations
+    depending on selected Apphooks.
+
+    Required data are injected in the page as javascript data that cms.app_hook_select.js
+    uses to create the appropriate data structure.
+
+    A stub 'add-another' link is created and filled in with the correct URL by the same
+    javascript.
+    """
+
+    class Media:
+        js = ('cms/js/modules/cms.base.js', 'cms/js/modules/cms.app_hook_select.js', )
+
+    def __init__(self, attrs=None, choices=(), app_configs={}):
+        self.app_configs = app_configs
+        super(ApplicationConfigSelect, self).__init__(attrs, choices)
+
+    def render(self, name, value, attrs=None, choices=()):
+        output = [super(ApplicationConfigSelect, self).render(name, value, attrs, choices)]
+        output.append('<script>\n')
+        output.append('var apphooks_configuration = {\n')
+        for application, cms_app in self.app_configs.items():
+            output.append("'%s': [%s]," % (application, ",".join(["['%s', '%s']" % (config.pk, force_text(config)) for config in cms_app.get_configs()])))
+        output.append('\n};\n')
+        output.append('var apphooks_configuration_url = {\n')
+        for application, cms_app in self.app_configs.items():
+            output.append("'%s': '%s'," % (application, cms_app.get_config_add_url()))
+        output.append('\n};\n')
+        output.append('var apphooks_configuration_value = \'%s\';\n' % value)
+        output.append('</script>')
+
+        related_url = ''
+        output.append('<a href="%s" class="add-another" id="add_%s" onclick="return showAddAnotherPopup(this);"> '
+                      % (related_url, name))
+        output.append('<img src="%s" width="10" height="10" alt="%s"/></a>'
+                      % (static('admin/img/icon_addlink.gif'), _('Add Another')))
+        return mark_safe(''.join(output))

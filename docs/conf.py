@@ -12,7 +12,8 @@
 # All configuration values have a default; values that are commented out serve
 # to show the default.
 
-import sys, os
+import os
+import sys
 
 # If extensions (or modules to document with autodoc) are in another
 # directory, add these directories to sys.path here. If the directory is
@@ -38,7 +39,7 @@ intersphinx_mapping = {
 }
 
 # Add any paths that contain templates here, relative to this directory.
-templates_path = ['templates']
+#templates_path = ['templates']
 
 # The suffix of source filenames.
 source_suffix = '.rst'
@@ -51,7 +52,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = u'django cms'
-copyright = u'2009, Patrick Lauber'
+copyright = u'2009-2015, Patrick Lauber'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -109,9 +110,20 @@ pygments_style = 'sphinx'
 
 # -- Options for HTML output ---------------------------------------------------
 
+# on_rtd is whether we are on readthedocs.org
+on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
+
+if not on_rtd:  # only import and set the theme if we're building docs locally
+    try:
+        import sphinx_rtd_theme
+        html_theme = 'sphinx_rtd_theme'
+        html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
+    except:
+        html_theme = 'default'
+
 # The theme to use for HTML and HTML Help pages.  Major themes that come with
 # Sphinx are currently 'default' and 'sphinxdoc'.
-html_theme = 'default'
+# html_theme = 'default'
 
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
@@ -192,8 +204,8 @@ latex_paper_size = 'a4'
 # Grouping the document tree into LaTeX files. List of tuples
 # (source start file, target name, title, author, documentclass [howto/manual]).
 latex_documents = [
-  ('index', 'djangocms.tex', u'django cms Documentation',
-   u'Patrick Lauber', 'manual'),
+    ('index', 'djangocms.tex', u'django cms Documentation',
+     u'Patrick Lauber', 'manual'),
 ]
 
 # The name of an image file (relative to this directory) to place at the top

@@ -1,21 +1,27 @@
 # -*- coding: utf-8 -*-
-from cms.admin.forms import (GlobalPagePermissionAdminForm, 
-    PagePermissionInlineAdminForm, ViewRestrictionInlineAdminForm)
+from copy import deepcopy
+from django.contrib import admin
+from django.contrib.admin import site
+from django.contrib.auth import get_user_model, get_permission_codename
+from django.contrib.auth.admin import UserAdmin
+from django.utils.translation import ugettext as _
+
+from cms.admin.forms import GlobalPagePermissionAdminForm, PagePermissionInlineAdminForm, ViewRestrictionInlineAdminForm
 from cms.exceptions import NoPermissionsException
 from cms.models import Page, PagePermission, GlobalPagePermission, PageUser
 from cms.utils.conf import get_cms_setting
 from cms.utils.helpers import classproperty
 from cms.utils.permissions import get_user_permission_level
-from copy import deepcopy
-from django.contrib import admin
-from django.contrib.auth.models import User
-from django.template.defaultfilters import title
-from django.utils.translation import ugettext as _
 
 from cms.admin import cmsadmin
 
-PAGE_ADMIN_INLINES = []
+PERMISSION_ADMIN_INLINES = []
 
+user_model = get_user_model()
+admin_class = UserAdmin
+for model, admin_instance in site._registry.items():
+    if model == user_model:
+        admin_class = admin_instance.__class__
 
 class TabularInline(admin.TabularInline):
     pass
@@ -27,32 +33,32 @@ class PagePermissionInlineAdmin(TabularInline):
     form = PagePermissionInlineAdminForm
     classes = ['collapse', 'collapsed']
     exclude = ['can_view']
-    extra = 0 # edit page load time boost
+    extra = 0  # edit page load time boost
 
     @classproperty
     def raw_id_fields(cls):
         # Dynamically set raw_id_fields based on settings
         threshold = get_cms_setting('RAW_ID_USERS')
-        if threshold and User.objects.count() > threshold:
+        if threshold and get_user_model().objects.count() > threshold:
             return ['user']
         return []
 
-    def queryset(self, request):
+    def get_queryset(self, request):
         """
         Queryset change, so user with global change permissions can see
-        all permissions. Otherwise can user see only permissions for 
+        all permissions. Otherwise can user see only permissions for
         peoples which are under him (he can't see his permissions, because
         this will lead to violation, when he can add more power to itself)
         """
         # can see only permissions for users which are under him in tree
 
-        ### here a exception can be thrown
+        # here an exception can be thrown
         try:
             qs = PagePermission.objects.subordinate_to_user(request.user)
             return qs.filter(can_view=False)
         except NoPermissionsException:
             return self.objects.get_empty_query_set()
-    
+
     def get_formset(self, request, obj=None, **kwargs):
         """
         Some fields may be excluded here. User can change only
@@ -72,15 +78,16 @@ class PagePermissionInlineAdmin(TabularInline):
             if not obj.has_move_page_permission(request):
                 exclude.append('can_move_page')
         formset_cls = super(PagePermissionInlineAdmin, self
-            ).get_formset(request, obj=None, exclude=exclude, *kwargs)
-        qs = self.queryset(request)
+        ).get_formset(request, obj=None, exclude=exclude, **kwargs)
+        qs = self.get_queryset(request)
         if obj is not None:
             qs = qs.filter(page=obj)
         formset_cls._queryset = qs
         return formset_cls
 
+
 class ViewRestrictionInlineAdmin(PagePermissionInlineAdmin):
-    extra = 0 # edit page load time boost
+    extra = 0  # edit page load time boost
     form = ViewRestrictionInlineAdminForm
     verbose_name = _("View restriction")
     verbose_name_plural = _("View restrictions")
@@ -97,13 +104,13 @@ class ViewRestrictionInlineAdmin(PagePermissionInlineAdmin):
         flag, he can't change assign can_publish permissions.
         """
         formset_cls = super(PagePermissionInlineAdmin, self).get_formset(request, obj, **kwargs)
-        qs = self.queryset(request)
+        qs = self.get_queryset(request)
         if obj is not None:
             qs = qs.filter(page=obj)
         formset_cls._queryset = qs
         return formset_cls
 
-    def queryset(self, request):
+    def get_queryset(self, request):
         """
         Returns a QuerySet of all model instances that can be edited by the
         admin site. This is used by changelist_view.
@@ -115,13 +122,15 @@ class ViewRestrictionInlineAdmin(PagePermissionInlineAdmin):
 class GlobalPagePermissionAdmin(admin.ModelAdmin):
     list_display = ['user', 'group', 'can_change', 'can_delete', 'can_publish', 'can_change_permissions']
     list_filter = ['user', 'group', 'can_change', 'can_delete', 'can_publish', 'can_change_permissions']
-    
+
     form = GlobalPagePermissionAdminForm
-    
-    search_fields = ('user__username', 'user__first_name', 'user__last_name', 'group__name')
-    
+    search_fields = []
+    for field in admin_class.search_fields:
+        search_fields.append("user__%s" % field)
+    search_fields.append('group__name')
+
     exclude = []
-    
+
     list_display.append('can_change_advanced_settings')
     list_filter.append('can_change_advanced_settings')
 
@@ -130,6 +139,7 @@ class GenericCmsPermissionAdmin(object):
     """
     Custom mixin for permission-enabled admin interfaces.
     """
+
     def update_permission_fieldsets(self, request, obj=None):
         """
         Nobody can grant more than he haves, so check for user permissions
@@ -145,37 +155,37 @@ class GenericCmsPermissionAdmin(object):
             model, title = perm_model
             opts, fields = model._meta, []
             name = model.__name__.lower()
-            for t in ('add', 'change', 'delete'):
-                fn = getattr(opts, 'get_%s_permission' % t)
-                if request.user.has_perm(opts.app_label + '.' + fn()):
-                    fields.append('can_%s_%s' % (t, name))
+            for key in ('add', 'change', 'delete'):
+                perm_code = '%s.%s' % (opts.app_label, get_permission_codename(key, opts))
+                if request.user.has_perm(perm_code):
+                    fields.append('can_%s_%s' % (key, name))
             if fields:
                 fieldsets.insert(2 + i, (title, {'fields': (fields,)}))
         return fieldsets
-    
+
     def _has_change_permissions_permission(self, request):
         """
         User is able to add/change objects only if he haves can change
         permission on some page.
         """
         try:
-            user_level = get_user_permission_level(request.user)
+            get_user_permission_level(request.user)
         except NoPermissionsException:
             return False
         return True
-    
+
     def has_add_permission(self, request):
         return self._has_change_permissions_permission(request) and \
-            super(self.__class__, self).has_add_permission(request)
-    
+               super(self.__class__, self).has_add_permission(request)
+
     def has_change_permission(self, request, obj=None):
         return self._has_change_permissions_permission(request) and \
-            super(self.__class__, self).has_change_permission(request, obj)
+               super(self.__class__, self).has_change_permission(request, obj)
 
 
 if get_cms_setting('PERMISSION'):
     admin.site.register(GlobalPagePermission, GlobalPagePermissionAdmin)
-    PAGE_ADMIN_INLINES.extend([
+    PERMISSION_ADMIN_INLINES.extend([
         ViewRestrictionInlineAdmin,
         PagePermissionInlineAdmin,
     ])

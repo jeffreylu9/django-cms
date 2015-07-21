@@ -1,22 +1,22 @@
 # -*- coding: utf-8 -*-
-import urllib
 import re
 
-from django.conf import settings
 from django.contrib.sites.models import Site
 from django.core.exceptions import ValidationError
 from django.core.urlresolvers import reverse
-from django.utils.encoding import force_unicode
+from django.utils.encoding import force_text
 from django.utils.safestring import mark_safe
+from django.utils.six.moves.urllib.parse import unquote
 from django.utils.translation import ugettext_lazy as _, ungettext_lazy
 
-from cms.exceptions import NoHomeFound
 from cms.models.pagemodel import Page
-from cms.utils.urlutils import any_path_re
+from cms.utils.compat.dj import is_installed
+from cms.utils.moderator import use_draft
+from cms.utils.urlutils import any_path_re, admin_reverse
 
 from WLSite import is_teacher
 
-ADMIN_PAGE_RE_PATTERN = ur'cms/page/(\d+)'
+ADMIN_PAGE_RE_PATTERN = r'cms/page/(\d+)'
 ADMIN_PAGE_RE = re.compile(ADMIN_PAGE_RE_PATTERN)
 
 
@@ -30,35 +30,26 @@ def use_draft(request):
     authenticated = request.user.is_authenticated() and (is_teacher.is_teacher(request.user) or request.user.is_staff)
     return (preview_draft or edit_mode) and authenticated
 
-
 def get_page_queryset(request=None):
     if request and use_draft(request):
         return Page.objects.drafts()
 
     return Page.objects.public()
 
-
 def get_page_queryset_from_path(path, preview=False, draft=False, site=None):
     """ Returns a queryset of pages corresponding to the path given
-    In may returns None or a single page is no page is present or root path is given
     """
-    if 'django.contrib.admin' in settings.INSTALLED_APPS:
-        admin_base = reverse('admin:index')
-    else:
-        admin_base = None
+    if is_installed('django.contrib.admin'):
+        admin_base = admin_reverse('index')
 
-    # Check if this is called from an admin request
-    if admin_base and path.startswith(admin_base):
-        # if so, get the page ID to request it directly
-        match = ADMIN_PAGE_RE.search(path)
-        if not match:
-            page = None
-        else:
-            try:
-                page = Page.objects.get(pk=match.group(1))
-            except Page.DoesNotExist:
-                page = None
-        return page
+        # Check if this is called from an admin request
+        if path.startswith(admin_base):
+            # if so, get the page ID to request it directly
+            match = ADMIN_PAGE_RE.search(path)
+            if match:
+                return Page.objects.filter(pk=match.group(1))
+            else:
+                return Page.objects.none()
 
     if not site:
         site = Site.objects.get_current()
@@ -70,22 +61,14 @@ def get_page_queryset_from_path(path, preview=False, draft=False, site=None):
     elif preview:
         pages = Page.objects.public().filter(site=site)
     else:
-        pages = Page.objects.public().published(site)
+        pages = Page.objects.public().published(site=site)
 
-    # Check if there are any pages
-    if not pages.all_root().exists():
-        return None
-
-    # get the home page (needed to get the page)
-    try:
-        home = pages.get_home(site=site)
-    except NoHomeFound:
-        home = None
-    # if there is no path (slashes stripped) and we found a home, this is the
-    # home page.
-    if not path and home:
-        page = home
-        return page
+    if not path:
+        # if there is no path (slashes stripped) and we found a home, this is the
+        # home page.
+        # PageQuerySet.published() introduces a join to title_set which can return
+        # multiple rows. Get only the first match.
+        return pages.filter(is_home=True, site=site)[:1]
 
     # title_set__path=path should be clear, get the pages where the path of the
     # title object is equal to our path.
@@ -94,34 +77,27 @@ def get_page_queryset_from_path(path, preview=False, draft=False, site=None):
 
 def get_page_from_path(path, preview=False, draft=False):
     """ Resolves a url path to a single page object.
-    Raises exceptions is page does not exist or multiple pages are found
+    Returns None if page does not exist
     """
-    page_qs = get_page_queryset_from_path(path, preview, draft)
-    if page_qs is not None:
-        if isinstance(page_qs, Page):
-            return page_qs
-        try:
-            page = page_qs.get()
-        except Page.DoesNotExist:
-            return None
-        return page
-    else:
+    try:
+        return get_page_queryset_from_path(path, preview, draft).get()
+    except Page.DoesNotExist:
         return None
 
 
 def get_page_from_request(request, use_path=None):
     """
     Gets the current page from a request object.
-    
+
     URLs can be of the following form (this should help understand the code):
     http://server.whatever.com/<some_path>/"pages-root"/some/page/slug
-    
+
     <some_path>: This can be anything, and should be stripped when resolving
-        pages names. This means the CMS is not installed at the root of the 
+        pages names. This means the CMS is not installed at the root of the
         server's URLs.
     "pages-root" This is the root of Django urls for the CMS. It is, in essence
         an empty page slug (slug == '')
-        
+
     The page slug can then be resolved to a Page model object
     """
 
@@ -131,21 +107,20 @@ def get_page_from_request(request, use_path=None):
 
     draft = use_draft(request)
     preview = 'preview' in request.GET
-
     # If use_path is given, someone already did the path cleaning
     if use_path is not None:
         path = use_path
     else:
-        path = request.path
-        pages_root = urllib.unquote(reverse("pages-root"))
+        path = request.path_info
+        pages_root = unquote(reverse("pages-root"))
         # otherwise strip off the non-cms part of the URL
-        if 'django.contrib.admin' in settings.INSTALLED_APPS:
-            admin_base = reverse('admin:index')
+        if is_installed('django.contrib.admin'):
+            admin_base = admin_reverse('index')
         else:
             admin_base = None
         if path.startswith(pages_root) and (not admin_base or not path.startswith(admin_base)):
             path = path[len(pages_root):]
-        # and strip any final slash
+            # and strip any final slash
         if path.endswith("/"):
             path = path[:-1]
 
@@ -160,29 +135,34 @@ def get_page_from_request(request, use_path=None):
 def is_valid_url(url, instance, create_links=True, site=None):
     """ Checks for conflicting urls
     """
+
     print "called is_valid_url"
-    page_root = urllib.unquote(reverse("pages-root"))
+    page_root = unquote(reverse("pages-root"))
     print "reversed the root"
+
     if url and url != page_root:
         print "in an if block now"
         # Url sanity check via regexp
         if not any_path_re.match(url):
             print "validation error yo"
             raise ValidationError(_('Invalid URL, use /my/url format.'))
-        # We only check page FK to site object to allow is_valid_url check on
+            # We only check page FK to site object to allow is_valid_url check on
         # incomplete Page instances
         print "okay we are here"
         if not site and instance.site_id:
             print "not site and instance.site_id"
             site = instance.site
+
         print "here now"
         # Retrieve complete queryset of pages with corresponding URL
+
         # This uses the same resolving function as ``get_page_from_path``
         if url.startswith(page_root):
             print "url starts with page root"
             url = url[len(page_root):]
+            
         print "still not broken yet"
-        page_qs = get_page_queryset_from_path(url.strip('/'), site=site)
+        page_qs = get_page_queryset_from_path(url.strip('/'), site=site, draft=instance.publisher_is_draft)
         print page_qs
         url_clashes = []
         # If queryset has pages checks for conflicting urls
@@ -194,12 +174,14 @@ def is_valid_url(url, instance, create_links=True, site=None):
             for page in page_qs:
                 # Every page in the queryset except the current one is a conflicting page
                 # We have to exclude both copies of the page
-                if page and page.publisher_public.pk != instance.pk:
+
+
+                if page and page.publisher_public_id != instance.pk and page.pk != instance.pk:
                     if create_links:
                         # Format return message with page url
                         url_clashes.append('<a href="%(page_url)s%(pk)s" target="_blank">%(page_title)s</a>' % {
-                            'page_url': reverse('admin:cms_page_changelist'), 'pk': page.pk,
-                            'page_title': force_unicode(page),
+                            'page_url': admin_reverse('cms_page_changelist'), 'pk': page.pk,
+                            'page_title': force_text(page),
                         })
                     else:
                         # Just return the page name
