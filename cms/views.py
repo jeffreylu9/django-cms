@@ -21,7 +21,7 @@ from django.utils.translation import get_language
 from cms.apphook_pool import apphook_pool
 from cms.appresolver import get_app_urls
 from cms.cache.page import set_page_cache, get_page_cache
-from cms.models import Page
+from cms.models import Page, Title
 from cms.utils import get_template_from_request, get_language_code
 from cms.utils import get_language_from_request
 from cms.utils import get_cms_setting
@@ -71,17 +71,9 @@ def details(request, slug):
     page = get_page_from_request(request, use_path=slug)
     if not page:
         return _handle_no_page(request, slug)
-    current_language = request.REQUEST.get('language', None)
-    if current_language:
-        current_language = get_language_code(current_language)
-        if not current_language in get_language_list(page.site_id):
-            current_language = None
-    if current_language is None:
-        current_language = get_language_code(getattr(request, 'LANGUAGE_CODE', None))
-        if current_language:
-            current_language = get_language_code(current_language)
-            if not current_language in get_language_list(page.site_id):
-                current_language = None
+    current_language = get_language_code(getattr(request, 'LANGUAGE_CODE', None))
+    if current_language and not current_language in get_language_list(page.site_id):
+        current_language = None
     if current_language is None:
         current_language = get_language_code(get_language())
     # Check that the current page is available in the desired (current) language

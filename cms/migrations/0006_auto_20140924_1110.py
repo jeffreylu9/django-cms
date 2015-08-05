@@ -9,7 +9,7 @@ class Migration(migrations.Migration):
     dependencies = [
         ('cms', '0005_auto_20140924_1039'),
     ]
-
+    
     operations = [
         migrations.AlterModelOptions(
             name='page',

@@ -4,7 +4,7 @@ from cms.utils import i18n
 
 from django.conf import settings
 from django.test.utils import override_settings
-from django.utils.importlib import import_module
+from importlib import import_module
 from cms.utils.compat.dj import LANGUAGE_SESSION_KEY
 
 @override_settings(

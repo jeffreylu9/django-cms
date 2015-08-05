@@ -11,7 +11,7 @@ from django.conf.urls import url
 from django.contrib import admin, messages
 from django.contrib.admin.models import LogEntry, CHANGE
 from django.contrib.admin.options import IncorrectLookupParameters
-from django.contrib.admin.util import get_deleted_objects
+from django.contrib.admin.utils import get_deleted_objects
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.sites.models import Site, get_current_site
 from django.core.exceptions import PermissionDenied, ObjectDoesNotExist, ValidationError
@@ -47,8 +47,7 @@ from cms.utils.conf import get_cms_setting
 from cms.utils.helpers import find_placeholder_relation, current_site
 from cms.utils.permissions import has_global_page_permission, has_generic_permission
 from cms.utils.urlutils import add_url_parameters, admin_reverse
-from cms.utils.plugins import current_site
-from cms.plugins.utils import has_reached_plugin_limit
+from cms.utils.plugins import has_reached_plugin_limit
 from menus.menu_pool import menu_pool
 from cms.admin import cmsadmin
 

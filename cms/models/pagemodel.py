@@ -96,6 +96,8 @@ class Page(six.with_metaclass(PageMetaClass, MP_Node)):
     reverse_id = models.CharField(_("id"), max_length=40, db_index=True, blank=True, null=True, help_text=_(
         "A unique identifier that is used with the page_url templatetag for linking to this page"))
     navigation_extenders = models.CharField(_("attached menu"), max_length=80, db_index=True, blank=True, null=True)
+    published = models.BooleanField(_("is published"), default=False)
+
     template = models.CharField(_("template"), max_length=100, choices=template_choices,
                                 help_text=_('The template used to render the content.'),
                                 default=TEMPLATE_DEFAULT)
@@ -196,7 +198,8 @@ class Page(six.with_metaclass(PageMetaClass, MP_Node)):
             try:
                 title = self.title_set.all()[0]
             except IndexError:
-                title = None        
+                title = None
+        return title
 
     def __repr__(self):
         # This is needed to solve the infinite recursion when
@@ -506,7 +509,6 @@ class Page(six.with_metaclass(PageMetaClass, MP_Node)):
         Args:
             commit: True if model should be really saved
         """
-        # delete template cache
         if (self.score==None):
             print "score null"
             self.score = 0
@@ -515,6 +517,8 @@ class Page(six.with_metaclass(PageMetaClass, MP_Node)):
             self.numWhoRated = 0
         if (self.limit_visibility_in_menu == None):
             self.limit_visibility_in_menu = 1
+
+        # delete template cache
         if hasattr(self, '_template_cache'):
             delattr(self, '_template_cache')
 

@@ -1,18 +1,17 @@
 # -*- coding: utf-8 -*-
 from django.conf import settings
-from django.conf.urls import url
 
 from cms.apphook_pool import apphook_pool
 from cms.appresolver import get_app_patterns
 from cms.views import details
 
-from django.conf import settings
-from django.conf.urls.defaults import url, patterns
+from django.conf.urls import url, patterns
 from WLSite import resource_views
 
 # This is a constant, really, but must live here due to import order
 SLUG_REGEXP = '[0-9A-Za-z-_.//]+'
 
+reg = None
 if settings.APPEND_SLASH:
     regexp = r'^(?P<slug>%s)/$' % SLUG_REGEXP
 else:
