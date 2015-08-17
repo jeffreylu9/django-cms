@@ -199,7 +199,10 @@ def details(request, slug):
     context['has_change_permissions'] = page.has_change_permission(request)
     context['has_view_permissions'] = page.has_view_permission(request)
     
-    title = Title.objects.filter(slug=slug)[0].title
+    try:
+        title = Title.objects.filter(slug=slug)[0].title
+    except:
+        title = ''
     context['title'] = title
     context['slug'] = slug
     
